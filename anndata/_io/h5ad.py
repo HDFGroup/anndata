@@ -8,6 +8,7 @@ from typing import Callable, Type, TypeVar, Union
 from typing import Collection, Sequence, Mapping
 
 import h5py
+import h5pyd
 import numpy as np
 import pandas as pd
 from pandas.api.types import is_categorical_dtype
@@ -35,9 +36,19 @@ from .utils import (
     EncodingVersions,
 )
 
-H5Group = Union[h5py.Group, h5py.File]
-H5Dataset = Union[h5py.Dataset]
+H5Group = Union[h5py.Group, h5py.File, h5pyd.Group, h5pyd.File]
+H5Dataset = Union[h5py.Dataset, h5pyd.Dataset]
 T = TypeVar("T")
+
+def h5File(filepath, mode):
+    if str(filepath).startswith("hdf5:"):
+        domain = str(filepath)[5:] # strip off the hdf5:
+        if domain.startswith('//'):
+            domain = domain[1:]  # one slash will suffice
+        f = h5pyd.File(domain, mode)
+    else:
+        f = h5py.File(filepath, mode)
+    return f
 
 
 def _to_hdf5_vlen_strings(value: np.ndarray) -> np.ndarray:
@@ -86,11 +97,12 @@ def write_h5ad(
     if adata.raw is not None:
         adata.strings_to_categoricals(adata.raw.var)
     dataset_kwargs = {**dataset_kwargs, **kwargs}
+    
     filepath = Path(filepath)
     mode = "a" if adata.isbacked else "w"
     if adata.isbacked:  # close so that we can reopen below
         adata.file.close()
-    with h5py.File(filepath, mode) as f:
+    with h5File(filepath, mode) as f:
         if "X" in as_dense and isinstance(adata.X, (sparse.spmatrix, SparseDataset)):
             write_sparse_as_dense(f, "X", adata.X, dataset_kwargs=dataset_kwargs)
         elif not (adata.isbacked and Path(adata.filename) == Path(filepath)):
@@ -123,7 +135,9 @@ def _write_method(cls: Type[T]) -> Callable[[H5Group, str, T], None]:
 
 
 @write_attribute.register(h5py.File)
+@write_attribute.register(h5pyd.File)
 @write_attribute.register(h5py.Group)
+@write_attribute.register(h5pyd.Group)
 def write_attribute_h5ad(f: H5Group, key: str, value, *args, **kwargs):
     if key in f:
         del f[key]
